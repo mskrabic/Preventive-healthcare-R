@@ -1,0 +1,801 @@
+---
+title: "Projekt iz predmeta \"Statistička analiza podataka\""
+author: "Ana Bagić, Tonio Ercegović, Nika Medić, Matej Škrabić"
+date: '18.01.2021 '
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+subtitle: Utjecaj preventivne zdravstvene zaštite na zdravlje
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Uvod
+U okviru projektnog zadatka istražit ćemo zdravstvene indikatore koji spadaju u prevenciju i same zdravstvene tegobe i bolesti. Istraživanje ćemo provesti nad skupom podataka iz jedne godine za 500 američkih gradova. Za svaki grad su mjerene 4 vrste metoda preventivne zdravstvene zaštite i 12 zdravstvenih stanja ili bolesti. Kroz ovaj projekt analizirat ćemo veze između pojedinih metoda preventivne zdravstvene zaštite i zdravlja stanovništva, te usporediti rezultate u različitim gradovima.
+
+Za početak, učitajmo podatke i potrebne pakete.
+
+```{r, message = FALSE}
+health = read.csv("./data_health_and_prevention.csv")
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+```
+Počistimo dataframe za lakše rukovanje podatcima, tj. riješimo se nepotrebnih varijabli: X, Data_Value_Unit (uvijek %) i opredjelimo se za samo jedan postotak: AgeAdjPrv.
+```{r}
+health <- health[health$DataValueTypeID == "AgeAdjPrv", c(2,3,4,5,8,9,10)]
+head(health[, c(-4)])
+prevention = health[health$Category == "Prevention",]
+outcomes = health[health$Category == "Health Outcomes",]
+```
+
+```{r}
+head(health$Measure, 3)
+```
+
+Uočimo da raspolažemo samo s ukupnim brojem stanovnika pojedinog grada, a udjeli stanovnika koji pate od neke bolesti ili primjenjuju neku od metoda preventivne zdravstvene zaštite dani su s starosnim ograničenjima (npr. samo stariji od 18 godina). Kako se proteže za sve gradove, metode i bolesti, prihvaćamo ovaj bias. Pretpostavljamo da nema ekstremnijih slučajeva (npr. jako velik udio djece u stanovništvu nekog grada) te smatramo da ova činjenica ne narušava previše rezultate naše analize. 
+
+## Opis podataka
+Prije nego krenemo odgovarati na konkretna pitanja, upoznajmo se najprije s danim podatcima.
+
+```{r}
+barplot(sort(table(health$StateDesc)/16, decreasing = TRUE),
+        las=2,
+        cex.names=.5,
+        main='States',
+        col = "coral")
+```
+
+Imamo najviše podataka za savezne države California, Texas i Florida, a najmanje za Wyoming, West Virginiu i Vermont.
+
+```{r, echo = FALSE}
+arthritis <- outcomes[outcomes$Short_Question_Text == "Arthritis",]
+arthritis_total <- sum(arthritis$Data_Value/100 * arthritis$PopulationCount)
+total_population <- sum(arthritis$PopulationCount)
+
+asthma <- outcomes[outcomes$Short_Question_Text == "Current Asthma",]
+asthma_total <- sum(asthma$Data_Value/100 * asthma$PopulationCount)
+
+cancer <- outcomes[outcomes$Short_Question_Text == "Cancer (except skin)",]
+cancer_total <- sum(cancer$Data_Value/100 * cancer$PopulationCount)
+
+copd <- outcomes[outcomes$Short_Question_Text == "COPD",]
+copd_total <- sum(copd$Data_Value/100 * copd$PopulationCount)
+
+chol <- outcomes[outcomes$Short_Question_Text == "High Cholesterol",]
+chol_total <- sum(chol$Data_Value/100 * chol$PopulationCount)
+
+high_bp <- outcomes[outcomes$Short_Question_Text == "High Blood Pressure",]
+high_bp_total <- sum(high_bp$Data_Value/100 *high_bp$PopulationCount)
+
+mhi <- outcomes[outcomes$Short_Question_Text == "Mental Health",]
+mhi_total <- sum(mhi$Data_Value/100 * mhi$PopulationCount)
+
+phi <- outcomes[outcomes$Short_Question_Text == "Physical Health",]
+phi_total <- sum(phi$Data_Value/100 * phi$PopulationCount)
+
+chd <- outcomes[outcomes$Short_Question_Text == "Coronary Heart Disease",]
+chd_total <- sum(chd$Data_Value/100 * chd$PopulationCount)
+
+ckd <- outcomes[outcomes$Short_Question_Text == "Chronic Kidney Disease",]
+ckd_total <- sum(ckd$Data_Value/100 * ckd$PopulationCount)
+
+stroke <- outcomes[outcomes$Short_Question_Text == "Stroke",]
+stroke_total <- sum(stroke$Data_Value/100 * stroke$PopulationCount)
+
+diabetes<- outcomes[outcomes$Short_Question_Text == "Diabetes",]
+diabetes_total <- sum(diabetes$Data_Value/100 * diabetes$PopulationCount)
+
+totals <- c(diabetes_total/total_population,
+            stroke_total/total_population, 
+            chd_total/total_population, 
+            phi_total/total_population, 
+            mhi_total/total_population, 
+            high_bp_total/total_population, 
+            chol_total/total_population, 
+            ckd_total/total_population, 
+            copd_total/total_population, 
+            cancer_total/total_population, 
+            asthma_total/total_population, 
+            arthritis_total/total_population)
+cols <- c("Diabetes", 
+          "Stroke", 
+          "CHD", 
+          "PHI", 
+          "MHI", 
+          "High.BP", 
+          "High.Chol", 
+          "CKD", "COPD", 
+          "Cancer", 
+          "Asthma", 
+          "Arthritis")
+totals <- as.data.frame(totals, row.names = cols)
+names(totals) = c("Freq")
+totals <- arrange(totals, desc(Freq))
+
+barplot(totals$Freq,
+        las=2,
+        width = 2,
+        names=row.names(totals),
+        main='Diseases',
+        ylab = "Percentage",
+        col = "coral")
+```
+
+Najviše zastupljene bolesti/zdravstvena stanja su povišeni kolesterol i krvni tlak, a najmanje je slučajeva kronične bolesti bubrega i moždanog udara.
+
+## Ohio i Florida
+U ovome odjeljku ćemo pokušati odgovoriti na pitanje postoji li neka metoda preventivne zdravstvene zaštite koja je popularnija u saveznoj državi Ohio nego u saveznoj državi Florida.
+
+Izdvojimo podatke za pojedinu saveznu državu u zasebni data frame.
+
+```{r}
+ohio = health[health$StateDesc == "Ohio" & health$Category == "Prevention",]
+florida = health[health$StateDesc == "Florida"  & health$Category == "Prevention",]
+```
+
+Veličinu uzorka za savezne države Ohio i Florida računamo na sljedeći način:
+
+```{r}
+ohioCities = distinct(ohio[,c(2,6)], .keep_all = FALSE)
+ohioPopulation = sum(ohioCities$PopulationCount)
+floridaCities = distinct(florida[, c(2, 6)], .keep_all = FALSE)
+floridaPopulation = sum(floridaCities$PopulationCount)
+```
+```{r, echo = FALSE}
+ohioCities
+print(paste("Ukupno stanovnika: ", ohioPopulation))
+floridaCities
+print(paste("Ukupno stanovnika: ", floridaPopulation))
+
+```
+Imamo podatke za 9 gradova iz savezne države **Ohio** koji ukupno imaju 2 330 226 stanovnika, te 33 grada iz savezne države **Florida** koji imaju 5 166 487 stanovnika.
+
+Provest ćemo test o dvije proporcije za svaku od metoda preventivne zdravstvene zaštite. Hipoteze su sljedeće:
+$$ H_0 ... p_{Ohio} = p_{Florida} $$
+$$ H_1 ... p_{Ohio} > p_{Florida} $$
+
+Prva metoda je zdravstveno osiguranje, ali kako su nam podatci dani kao postotak stanovništva koji *nema* zdravstveno osiguranje, najprije ćemo ga pretvoriti u postotak osiguranog stanovništva te izračunati ukupne proporcije.
+```{r}
+ohio_health_insurance <- ohio[ohio$Short_Question_Text == "Health Insurance",]
+ohio_health_insurance$Data_Value = 100- ohio_health_insurance$Data_Value
+k_ohio <- sum(ohio_health_insurance$Data_Value/100 * ohio_health_insurance$PopulationCount)
+p_ohio <- k_ohio/ohioPopulation
+
+florida_health_insurance <- florida[florida$Short_Question_Text == "Health Insurance",]
+florida_health_insurance$Data_Value = 100 - florida_health_insurance$Data_Value
+k_florida <- sum(florida_health_insurance$Data_Value/100 * florida_health_insurance$PopulationCount)
+p_florida <- k_florida/floridaPopulation
+```
+```{r, echo = FALSE}
+print(paste("Ohio: ", p_ohio, ", Florida: ", p_florida))
+```
+
+Dakle, u saveznoj državi Ohio je osigurano 84.89674% stanovništva, a u saveznoj državi Florida 77.6%.
+Prije nego provedemo test da bismo usporedili ove uzorke, pogledajmo stupčasti dijagram kako bismo bolje vizualizirali podatke.
+
+```{r, echo = FALSE}
+barplot(matrix(c(k_ohio/ohioPopulation,
+                 1-k_ohio/ohioPopulation,
+                 k_florida/floridaPopulation,
+                 1-k_florida/floridaPopulation),
+               nr=2), 
+        beside=T, 
+        col=c("aquamarine3","coral"), 
+        names.arg=c("Ohio", "Florida"),
+        main="Health insurance",
+        legend.text = c("Yes", "No"),
+        args.legend = list(x = "topright", inset=c(0, 0)))
+grid(col = "gray", lty = "dotted",
+     lwd = par("lwd"), equilogs = TRUE)
+```
+
+Provedimo sada test o dvije proporcije.
+```{r}
+prop.test(c(k_ohio, k_florida),
+          c(ohioPopulation, floridaPopulation),
+          alternative = "greater")
+```
+Na osnovu provedenog testa možemo odbaciti nultu hipotezu o jednakosti proporcija i zaključiti da je zdravstveno osiguranje popularnija metoda preventivne zdravstvene zaštite u saveznoj državi Ohio nego u saveznoj državi Florida.
+
+Druga metoda je uzimanje lijekova za regulaciju krvnog tlaka. Izdvojimo potrebne podatke.
+```{r}
+ohio_high_bp <- health[health$StateDesc == "Ohio" 
+                       & health$Short_Question_Text == "High Blood Pressure",]
+ohio_high_bp$PopulationCount <- ohio_high_bp$Data_Value/100*ohio_high_bp$PopulationCount
+ohio_high_bp <- ohio_high_bp[, c("CityName", "PopulationCount", "Short_Question_Text")]
+ohio_total_high_bp <- sum(ohio_high_bp$PopulationCount)
+
+ohio_bp_medication <- ohio[ohio$Short_Question_Text == "Taking BP Medication",]
+ohio_bp_medication$PopulationCount <- ohio_high_bp$PopulationCount
+k_ohio <- sum(ohio_bp_medication$Data_Value/100 * ohio_bp_medication$PopulationCount)
+
+florida_high_bp <- health[health$StateDesc == "Florida" 
+                          & health$Short_Question_Text == "High Blood Pressure",]
+florida_high_bp$PopulationCount <- florida_high_bp$Data_Value/100*florida_high_bp$PopulationCount
+florida_high_bp <- florida_high_bp[, c("CityName", "PopulationCount", "Short_Question_Text")]
+florida_total_high_bp <- sum(florida_high_bp$PopulationCount)
+
+florida_bp_medication <- florida[florida$Short_Question_Text == "Taking BP Medication",]
+florida_bp_medication$PopulationCount <- florida_high_bp$PopulationCount
+k_florida <- sum(florida_bp_medication$Data_Value/100 * florida_bp_medication$PopulationCount)
+
+p_ohio <- k_ohio/ohio_total_high_bp
+p_florida <- k_florida/florida_total_high_bp
+```
+
+```{r, echo = FALSE}
+print(paste("Ohio: ", p_ohio, ", Florida: ", p_florida))
+```
+
+Sada možemo pogledati stupčasti dijagram.
+
+```{r, echo=FALSE}
+barplot(matrix(c(k_ohio/ohio_total_high_bp,
+                 1-k_ohio/ohio_total_high_bp,
+                 k_florida/florida_total_high_bp,
+                 1-k_florida/florida_total_high_bp),
+               nr=2),
+        beside=T, 
+        col=c("aquamarine3","coral"), 
+        names.arg=c("Ohio", "Florida"),
+        main = "Taking BP Medication",
+        legend.text = c("Yes", "No"),
+        args.legend = (x="topright"))
+grid(col = "gray", lty = "dotted",
+     lwd = par("lwd"), equilogs = TRUE)
+```
+
+U saveznoj državi Ohio 66.02718% ljudi starijih od 18 godina koji imaju povišen krvni tlak uzima lijekove za regulaciju krvnog tlaka, a u saveznoj državi Florida je taj udio 60.9801%.
+
+Testirajmo jednakost proporcija.
+```{r}
+prop.test(c(k_ohio, k_florida),
+          c(ohio_total_high_bp, florida_total_high_bp),
+          alternative = "greater")
+```
+Na osnovu provedenog testa ponovno zaključujemo da je metoda popularnija u saveznoj državi Ohio nego u saveznoj državi Florida.
+
+Sljedeća metoda je odlazak na rutinske sistematske preglede. Provedimo analizu na jednak način kao do sada.
+
+```{r}
+ohio_checkup <- ohio[ohio$Short_Question_Text == "Annual Checkup",]
+k_ohio <- sum(ohio_checkup$Data_Value/100 * ohio_checkup$PopulationCount)
+p_ohio <- k_ohio/ohioPopulation
+
+florida_checkup <- florida[florida$Short_Question_Text == "Annual Checkup",]
+k_florida <- sum(florida_checkup$Data_Value/100 * florida_checkup$PopulationCount)
+p_florida <- k_florida/floridaPopulation
+```
+```{r, echo = FALSE}
+print(paste("Ohio: ", p_ohio, ", Florida: ", p_florida))
+```
+```{r, echo = FALSE}
+barplot(matrix(c(k_ohio/ohioPopulation, 
+                 1-k_ohio/ohioPopulation,
+                 k_florida/floridaPopulation, 
+                 1-k_florida/floridaPopulation),
+               nr=2), 
+        beside=T, 
+        col=c("aquamarine3","coral"), 
+        names.arg=c("Ohio", "Florida"),
+        main="Annual checkups",
+        legend.text = c("Yes", "No"),
+        args.legend = list(x = "topright"))
+grid(col = "gray", lty = "dotted",
+     lwd = par("lwd"), equilogs = TRUE)
+```
+
+72.56912% stanovništva savezne države Ohio i 71.56326% stanovništva savezne države Florida odlazi na rutinske sistematske preglede.
+Provedimo test o dvije proporcije.
+
+```{r}
+prop.test(c(k_ohio, k_florida),
+          c(ohioPopulation, floridaPopulation),
+          alternative = "greater")
+```
+Na osnovu provedenog testa zaključujemo da je metoda popularnija u saveznoj državi Ohio nego u saveznoj državi Florida.
+
+Posljednja metoda preventivne zdravstvene zaštite je kontrola kolesterola. Vizualizirajmo podatke kao i do sada.
+
+```{r}
+ohio_cholesterol = ohio[ohio$Short_Question_Text == "Cholesterol Screening",]
+k_ohio <- sum(ohio_cholesterol$Data_Value/100 * ohio_cholesterol$PopulationCount)
+p_ohio <- k_ohio/ohioPopulation
+
+florida_cholesterol <- florida[florida$Short_Question_Text == "Cholesterol Screening",]
+k_florida <- sum(florida_cholesterol$Data_Value/100 * florida_cholesterol$PopulationCount)
+p_forida <- k_florida/floridaPopulation
+```
+```{r, echo = FALSE}
+print(paste("Ohio: ", p_ohio, ", Florida: ", p_florida))
+```
+```{r, echo = FALSE}
+barplot(matrix(c(k_ohio/ohioPopulation,
+                 1-k_ohio/ohioPopulation,
+                 k_florida/floridaPopulation, 
+                 1-k_florida/floridaPopulation),
+               nr=2), 
+        beside=T, 
+        col=c("aquamarine3","coral"), 
+        names.arg=c("Ohio", "Florida"),
+        main="Cholesterol screened in last 5 years",
+        legend.text = c("Yes", "No"),
+        args.legend = list(x = "topright"))
+grid(col = "gray", lty = "dotted",
+     lwd = par("lwd"), equilogs = TRUE)
+```
+
+U saveznoj državi Ohio 72.40164% stanovništva kontrolira svoj kolesterol, a u saveznoj državi Florida je taj udio 75.3788%.
+Testirajmo proporcije na jednak način kao i za prethodne metode.
+```{r}
+prop.test(c(k_ohio, k_florida),
+          c(ohioPopulation, floridaPopulation),
+          alternative = "greater")
+```
+Na osnovu provedenog testa ne možemo odbaciti nultu hipotezu o jednakosti proporcija. Štoviše, test snažno upućuje da je metoda zapravo popularnija u saveznoj državi Florida, što nam se i čini očitim iz ukupnih udjela, pa se možemo i uvjeriti u to.
+```{r}
+prop.test(c(k_ohio, k_florida),
+          c(ohioPopulation, floridaPopulation),
+          alternative = "less")
+```
+Možemo reći da su rezultati očekivani, s obzirom na veličinu uzorka čak su i relativno male razlike u proporciji(kao npr. kod sistematskih pregleda), koje nam možda kontekstualno nisu značajne, ipak statistički značajne.
+
+Analizi ovog problema mogli smo pristupiti i na malo drugačiji način - mogli smo provjeriti jednakost srednjih vrijednosti postotaka stanovništva koji primjenjuju neku metodu po gradovima saveznih država Ohio i Florida. Pritom valja napomenuti da bismo time odgovorili na nešto drugačije pitanje: u prethodnoj analizi uspoređivali smo ukupne proporcije u saveznim državama, dok bi sada uspoređivali je li prosječni udio stanovnika koji primjenjuje neku metodu jednak za gradove u saveznoj državi Ohio, odnosno Florida. Promotrimo za primjer sistematske preglede.
+
+Sada podatke promatramo kao metričke, te želimo provesti t-test o jednakosti srednjih vrijednosti.
+Pretpostavke testa su *nezavisnost* i *normalnost* podataka. Nezavisnost možemo pretpostaviti s obzirom da se podatci odnose na različite savezne države, a normalnost ćemo provjeriti u nastavku. Pogledajmo najprije box-and-whiskers plot, histograme i QQ-plot.
+
+```{r, echo = FALSE, message = FALSE}
+boxplot(ohio_checkup$Data_Value, florida_checkup$Data_Value, 
+        names = c("Annual checkups in Ohio", "Annual checkups in Florida"),
+        col = c("coral", "aquamarine"))
+```
+```{r, echo = FALSE}
+d1 <- density(ohio_checkup$Data_Value)
+d2 <- density(florida_checkup$Data_Value)
+par(mfrow = c(1,2))
+plot(d1, main = "Ohio checkups")
+polygon(d1, col="coral")
+plot(d2, main = "Florida checkups")
+polygon(d2, col="aquamarine")
+```
+```{r, echo = FALSE}
+par(mfrow = c(2, 2))
+hist(ohio_checkup$Data_Value,
+     main="Annual checkups in Ohio",
+     xlab="Percentage of citizens",
+     ylab="Number of cities")
+qqnorm(ohio_checkup$Data_Value, pch = 1, frame = FALSE,main='Annual checkups in Ohio')
+qqline(ohio_checkup$Data_Value, col = "steelblue", lwd = 2)
+
+hist(florida_checkup$Data_Value,
+     main="Annual checkups in Florida",
+     xlab="Percentage of citizens",
+     ylab="Number of cities")
+qqnorm(florida_checkup$Data_Value, pch = 1, frame = FALSE,main='Annual checkups in Florida')
+qqline(florida_checkup$Data_Value, col = "steelblue", lwd = 2)
+```
+
+Razdiobe odstupaju od normalne, ali nisu previše zakrivljene ili nepravilne.
+Provedimo sada Lillieforsovu inačicu Kolmogorov-Smirnovljevevog testa.
+
+```{r, include=FALSE}
+require(nortest)
+```
+
+```{r}
+lillie.test(ohio_checkup$Data_Value)
+lillie.test(florida_checkup$Data_Value)
+```
+Iako uz uobičajenu razinu sigurnosti od $\alpha=0.05$ test odbacuje pretpostavku normalnosti za podatke iz Floride, p-vrijednost je skoro 4% te imajući na umu robusnost t-testa na normalnost, zaključujemo da možemo pretpostaviti normalnost podataka. Provjerimo sada jednakost varijanci.
+```{r}
+var.test(ohio_checkup$Data_Value, florida_checkup$Data_Value)
+```
+Na osnovu p-vrijednosti od 0.2743 ne odbacujemo nultu hipotezu te konačno možemo provesti t-test s pretpostavkom o jednakosti varijanci. Uzmimo razinu značajnosti $\alpha = 0.05$.
+```{r}
+t.test(ohio_checkup$Data_Value, florida_checkup$Data_Value, alternative = "greater", var.equal = TRUE)
+```
+Na osnovu ovog testa ne možemo odbaciti nultu hipotezu o jednakosti srednjih vrijednosti. Uz razinu značajnosti od 5% zaključujemo da je prosječni udio stanovništva koji ide na redovne sistematske preglede jednak za gradove saveznih država Ohio i Florida.
+Kao neparametarsku alternativu ovome testu, mogli smo provesti Mann-Whitney-Wilcoxonov test koji je slabiji, ali ne zahtjeva normalnost podataka.(izračunata p-vrijednost će biti aproksimativna jer postoje "duplikati")
+```{r}
+wilcox.test(ohio_checkup$Data_Value, florida_checkup$Data_Value, alternative='greater')
+```
+p-vrijednost je očekivano manja nego kod t-testa, ali i dalje veća od 5% pa opet ne bismo odbacili nultu hipotezu o jednakosti srednjih vrijednosti.
+
+## Kronične plućne bolesti - astma i COPD
+
+U uvome dijelu izabrat ćemo 3 savezne države i usporediti njihove proporcije stanovništva koje boluje od kroničnih plućnih bolesti. Tri države koje smo izabrali su: **Arizona**, **Colorado** i **Utah**. Najprije ćemo se upoznati s promatranim podacima te promotriti kontigencijsku tablicu za ove savezne države.
+
+Kako test homogenosti zahtjeva da zbrojevi redaka ili stupaca budu unaprijed zadani, uzmimo uzorak od 500 000 ljudi iz svake od tri savezne države.
+
+Pogledajmo najprije podatke za kroničnu opstruktivnu bolest pluća.
+
+```{r, echo = FALSE}
+set.seed(333) # postavljanje seeda kako bi pri ponovnom pokretanju koda izvukli isti uzorak.
+```
+```{r}
+arizona = outcomes[outcomes$StateDesc == "Arizona" & outcomes$Short_Question_Text == "COPD",]
+colorado = outcomes[outcomes$StateDesc == "Colorado" & outcomes$Short_Question_Text == "COPD",]
+utah = outcomes[outcomes$StateDesc == "Utah" & outcomes$Short_Question_Text == "COPD",]
+
+n <- 500000
+
+arizona_population <- sum(arizona$PopulationCount)
+colorado_population <- sum(colorado$PopulationCount)
+utah_population <- sum(utah$PopulationCount)
+
+arizona_COPD <- sum(arizona$PopulationCount * arizona$Data_Value/100)
+colorado_COPD <- sum(colorado$PopulationCount * colorado$Data_Value/100)
+utah_COPD <- sum(utah$PopulationCount * utah$Data_Value/100)
+
+arizona_sample <- rbinom(n, 1, arizona_COPD/arizona_population)
+colorado_sample <- rbinom(n, 1, colorado_COPD/colorado_population)
+utah_sample <- rbinom(n, 1, utah_COPD/utah_population)
+
+tmp <- c(sum(arizona_sample),
+         n-sum(arizona_sample),
+         sum(colorado_sample),
+         n-sum(colorado_sample),
+         sum(utah_sample),
+         n-sum(utah_sample))
+ctablica <- matrix(tmp,ncol=3)
+colnames(ctablica) <- c("Arizona","Colorado","Utah")
+rownames(ctablica) <- c("COPD","bez COPD")
+ctablica = as.table(ctablica)
+ctablica
+```
+
+```{r, echo = FALSE}
+set.seed(Sys.time()) # brisanje postavljenog seeda.
+```
+
+Sljedeći graf prikazuje tu tablicu i odskakanje njenih vrijednosti od očekivanih. 
+
+Visina pravokutnika koji označavaju jednu vrijednost je proporcionalna udjelu broja stanovnika koji imaju/nemaju COPD, dok širina prikazuje udio broja stanovnika u nekoj saveznoj državi. Bijela boja znači da je vrijednost prilično jednaka očekivanoj, plava da je vrijednost veća te crvena da je vrijednost manja.
+
+Odmah možemo primjetiti da na grafu postoje samo vrijednosti označene plavom ili crvenom bojom. To sugerira jako odstupanje promatranih vrijednosti od očekivanih te već sada možemo naslutiti rezultate testa o proporcijama tih saveznih država. Baratamo s velikim uzorcima i sigurni smo da ako postoje stvarne razlike u udjelima stanovnika koji boluju od COPD-a u te 3 savezne države da će test o homogenosti to i pokazati.
+
+```{r}
+dt <- as.table(as.matrix(ctablica))
+library("graphics")
+mosaicplot(dt,
+           shade=TRUE,
+           las=1,
+           main="Mosaic plot of COPD")
+```
+
+Za nultu hipotezu uzimamo da su proporcije države jednake, a za alternativnu hipotezu da se bar jedna proporcija razlikuje. Sada ćemo provesti test za homogenost nad već ispisanom tablicom i ispisati promatrane i očekivane vrijednosti te komentirati njihove razlike.
+
+$$ H_0 ... p_{Arizona} = p_{Colorado} = p_{Utah} $$
+$$ H_1 ... \text{bar jedna proprocija nije jednaka} $$
+
+
+```{r}
+ctest <- chisq.test(ctablica)
+ctest
+```
+
+```{r, echo = FALSE}
+
+cat("\nPromatrane vrijednosti:\n")
+ctest$observed
+cat("\nOčekivane vrijednosti:\n")
+ctest$expected
+```
+
+Na osnovi testa odbacujemo nultu hipotezu i prihvaćamo da udjeli stanovnika koji boluju od COPD-a u saveznim državama Arizona, Colorado i Utah nisu isti. Usporedbom očekivanih vrijednosti vidimo da Arizona ima veći udio bolesnika od očekivanog dok Colorado i Utah imaju manji. 
+
+Pogledajmo još jedan grafički prikaz koji pruža bolje objašnjenje utjecaja odstupanja promatranih vrijednosti.
+
+```{r, include = FALSE}
+library(corrplot)
+```
+```{r}
+corrplot(ctest$residuals, is.cor = FALSE)
+```
+
+Polja matrice obojana plavom bojom označavaju veći udio od očekivanog, dok ona obojana crvenom označavaju manji udio od očekivanog. Iz grafa vidimo visoko odstupanje u razlici broja bolesnih kod Arizone i Utah te nešto manje u saveznoj državi Colorado. Ovime smo grafički pokazali rezultate koje je pokazao prethodno provedeni test.
+
+Provedimo istu analizu i za astmu.
+
+```{r, echo = FALSE}
+set.seed(444) # postavljanje seeda kako bismo pri ponovnom pokretanju koda dobili iste uzorke.
+```
+```{r}
+arizona = outcomes[outcomes$StateDesc == "Arizona" 
+                   & outcomes$Short_Question_Text == "Current Asthma",]
+colorado = outcomes[outcomes$StateDesc == "Colorado" 
+                    & outcomes$Short_Question_Text == "Current Asthma",]
+utah = outcomes[outcomes$StateDesc == "Utah" 
+                & outcomes$Short_Question_Text == "Current Asthma",]
+
+arizona_asthma <- sum(arizona$PopulationCount * arizona$Data_Value/100)
+colorado_asthma <- sum(colorado$PopulationCount * colorado$Data_Value/100)
+utah_asthma <- sum(utah$PopulationCount * utah$Data_Value/100)
+
+arizona_sample <- rbinom(n, 1, arizona_asthma/arizona_population)
+colorado_sample <- rbinom(n, 1, colorado_asthma/colorado_population)
+utah_sample <- rbinom(n, 1, utah_asthma/utah_population)
+
+tmp <- c(sum(arizona_sample),
+         n-sum(arizona_sample),
+         sum(colorado_sample),
+         n-sum(colorado_sample),
+         sum(utah_sample),
+         n-sum(utah_sample))
+ctablica <- matrix(tmp,ncol=3)
+colnames(ctablica) <- c("Arizona","Colorado","Utah")
+rownames(ctablica) <- c("Astma","Nema astmu")
+ctablica = as.table(ctablica)
+ctablica
+```
+
+```{r, echo = FALSE}
+set.seed(Sys.time()) # resetiranje seeda.
+```
+
+```{r}
+dt <- as.table(as.matrix(ctablica))
+library("graphics")
+mosaicplot(dt,
+           shade=TRUE,
+           las=1,
+           main="Mosaic-plot of asthma")
+```
+
+Ovaj uzorak stanovnika, zaključujući prema grafu, bliži je homogenosti nego u prethodnom slučaju.
+Vidimo da su opažene vrijednosti za saveznu državu Arizona vrlo bliske očekivanima. Provedimo sada test o homogenosti.
+
+```{r}
+ctest <- chisq.test(ctablica)
+ctest
+```
+```{r, echo = FALSE}
+cat("\nPromatrane vrijednosti:\n")
+ctest$observed
+cat("\nOčekivane vrijednosti:\n")
+ctest$expected
+```
+p-vrijednost je i dalje izrazito mala i odbacujemo pretpostavku o homogenosti proporcija.
+
+```{r}
+corrplot(ctest$residuals, is.cor = FALSE)
+```
+
+I ovaj graf nam potvrđuje što smo prethodno zaključili - proporcije u Arizoni su u skladu s očekivanima, ali za Colorado i Utah postoje poprilična odstupanja.
+
+## Veze između metoda preventivne zaštite i bolesti
+Podsjetimo se, raspolažemo podatcima za 4 metode preventivne zdravstvene zaštite: zdravstveno osiguranje, uzimanje lijekova za regulaciju krvnog tlaka, redovni sistematski pregledi i kontrola kolesterola te 12 bolesti odnosno zdravstvenih tegoba: artritis, povišeni krvni tlak, rak, astma, koronarna bolest srca, kronična opstruktivna bolest pluća, dijabetes, povišeni kolesterol, kronična bolest bubrega, produljeni problemi s mentalnim zdravljem, produljeni problemi s fizičkim zdravljem te moždani udar.
+
+Prije provođenja ikakvih testova, od ponuđenih podataka, očekujemo najjaču zavisnost između uzimanja lijekova za regulaciju krvnog tlaka i udjela stanovništva koji imaju problema s krvnim tlakom te između udjela ljudi koji su pregledali kolesterol  i udjela stanovništva s povišenim kolesterolom. Zdravstveno osiguranje i redovni sistematski pregledi su "općenitije" metode zdravstvene zaštite pa nam se unaprijed ne čini da će imati posebni utjecaj na neku određenu bolest već će doprinositi relativno manji, podjednak utjecaj na sve bolesti.
+
+Za početak, formatirajmo podatke u prikladniji oblik za predstojeću analizu.
+```{r}
+health_grouped <- health %>% group_by(StateDesc, CityName) %>% ungroup
+health_grouped <- health_grouped[, c(1,2,5, 6, 7)]
+health_overview <- data.frame(health_grouped)
+health_overview <- reshape(health_overview, 
+                           idvar=c("StateDesc", "CityName", "PopulationCount"),
+                           timevar = "Short_Question_Text",
+                           direction="wide")
+
+health_overview <- health_overview %>% rename(
+  "Health.Insurance" = `Data_Value.Health Insurance`,
+  "Arthritis" = Data_Value.Arthritis,
+  "High.Blood.Pressure" = `Data_Value.High Blood Pressure`,
+  "Taking.BP.Medication" = `Data_Value.Taking BP Medication`,
+  "Cancer" = `Data_Value.Cancer (except skin)`,
+  "Asthma" = `Data_Value.Current Asthma`,
+  "Coronary.Heart.Disease" = `Data_Value.Coronary Heart Disease`,
+  "Annual.Checkup" = `Data_Value.Annual Checkup`,
+  "Cholesterol.Screening" = `Data_Value.Cholesterol Screening`,
+  "COPD" = Data_Value.COPD,
+  "Diabetes" = Data_Value.Diabetes,
+  "High.Cholesterol" = `Data_Value.High Cholesterol`,
+  "Chronic.Kidney.Disease" = `Data_Value.Chronic Kidney Disease`,
+  "Mental.Health.Issues" = `Data_Value.Mental Health`,
+  "Physical.Health.Issues" = `Data_Value.Physical Health`,
+  "Stroke" = Data_Value.Stroke,
+)
+health_overview$`Health.Insurance` <- 100-health_overview$`Health.Insurance`
+colorder <- c(1,2,3, 4, 7, 11, 12, 5, 9, 8, 16, 10, 13, 14, 6, 15, 17, 18, 19)
+health_overview <- health_overview[, colorder]
+head(health_overview, 1)
+
+```
+Krenimo redom te promotrimo povezanost između uzimanja lijekova za regulaciju tlaka i broja ljudi koji imaju problema s krvnim tlakom.
+
+Kako zasada promatramo utjecaj samo jedne nezavisne varijable (uzimanje lijekova) na zavisnu varijablu (udio stanovnika s povišenim krvnim tlakom), za vizualizaciju će nam vrlo dobro poslužiti scatter plot.
+
+```{r}
+plot(health_overview$Taking.BP.Medication, 
+     health_overview$High.Blood.Pressure,
+     xlab = "Taking BP Medication",
+     ylab = "High Blood Pressure")
+fit.bp.bpmeds = lm(High.Blood.Pressure~Taking.BP.Medication,
+                   data = health_overview)
+lines(health_overview$Taking.BP.Medication,fit.bp.bpmeds$fitted.values,
+      col='red',
+      lwd = 2)
+```
+
+Na prvi pogled možda se ovakav graf čini iznenađujućim, ali kad bolje promislimo "povišen tlak" je relativan pojam te je izgledno da dio ljudi koji imaju samo blago povišen tlak neće piti lijekove, ali oni s izrazito visokim tlakom sigurno hoće. Logično je da je u gradovima gdje ima općenito više ljudi s povišenim tlakom, vrlo vjerojatno veći i broj ljudi s jako visokim tlakom pa ovakav odnos te dvije varijable ima smisla. Prije nego detaljnije pogledamo ovaj model, provjerimo pretpostavke modela: *normalnost* i *homoskedastičnost* reziduala.
+
+Slijede histogrami reziduala i standardiziranih reziduala te qq-plot standardiziranih reziduala. 
+```{r}
+par(mfrow=c(2,2))
+hist(fit.bp.bpmeds$residuals)
+hist(rstandard(fit.bp.bpmeds))
+qqnorm(rstandard(fit.bp.bpmeds))
+qqline(rstandard(fit.bp.bpmeds))
+```
+
+Svi priloženi grafovi ukazuju na normalnost reziduala, ali možemo i provesti recimo Lillieforsov test nad njima da se u to uvjerimo:
+```{r}
+lillie.test(rstandard(fit.bp.bpmeds))
+```
+p-vrijednost od 0.1738 nam potvrđuje ono što smo i očekivali: ne možemo odbaciti nultu hipotezu tj. možemo pretpostaviti normalnost reziduala.
+
+Sada ostaje pokazati homogenost varijance reziduala, tj. reziduali se ne bi smjeli "širiti" s povećanjem $\hat{y}$. Za to su korisni sljedeći scatter-plotovi:
+
+```{r, echo=FALSE}
+plot(fit.bp.bpmeds$fitted.values, fit.bp.bpmeds$residuals)
+plot(fit.bp.bpmeds, 3)
+```
+
+Kada promotrimo reziduale u ovisnosti o procijenjenim vrijednostima na prvom grafu, vidimo naznake heteroskedastičnosti - za najveće vrijednosti reziduali su uglavnom veći od nule. Međutim, pogledamo li drugi graf na kojem su apsolutne vrijednosti standardiziranih reziduala, vidimo da je stanje ipak prihvatljivo pa zaključujemo da su pretpostavke modela zadovoljene.
+
+```{r}
+summary(fit.bp.bpmeds)
+```
+
+Očekivano vidimo da je uzimanje lijekova za regulaciju tlaka statistički značajan regresor. S obzirom na kontekst problema možemo biti poprilično zadovoljni s koeficijentom korelacije od skoro 63%, ali vrijedi u analizu uključiti i ostale metode preventivne zaštite i pogledati takav model višestruke regresije.
+
+Provjerimo koreliranost između različitih metoda preventivne zaštite.
+
+```{r, include = FALSE}
+require(corrplot)
+```
+
+```{r}
+temp <- health_overview[,c(4,5,6,7)]
+temp %>% cor %>% corrplot
+```
+
+```{r, echo=FALSE}
+print(paste("Correlation between:"))
+print(paste("Annual checkups and taking BP medication",
+            cor(health_overview$Annual.Checkup, health_overview$Taking.BP.Medication)))
+print(paste("Insurance and cholesterol screening:",
+            cor(health_overview$Health.Insurance, health_overview$Cholesterol.Screening)))
+```
+Vidimo da postoji poprilično velika korelacija između sistematskih pregleda i uzimanja lijekova(78%) što nam ima smisla s obzirom da se pacijentima na pregledu ustanovi povišen tlak i zatim propišu lijekovi. Također vidimo koreliranost između zdravstvenog osiguranja i pregleda kolesterola(57%). Imajući na umu da se radi o američkim gradovima gdje je zdravstvena skrb izrazito skupa, za očekivati je da ljudi bez zdravstvenog osiguranja uglavnom neće ići na preglede kolesterola.
+
+Pogledajmo sada linearni model povišenog krvnog tlaka u ovisnosti o svim metodama zaštite.
+
+```{r}
+bp_model <- health_overview[,c(4,5,6,7,15)]
+fit.bp.all <- lm(High.Blood.Pressure ~ ., data = bp_model)
+summary(fit.bp.all)
+```
+Svi su regresori statistički značajni, a $R^2$ i $R_{adj}^2$ koji penalizira dodatne parametre su veći nego u slučaju jednostavne regresije i iznose oko 74%.
+
+Druga povezanost koju očekujemo je između pregleda kolesterola i udjela ljudi s povišenim kolesterolom.
+
+```{r}
+plot(health_overview$Cholesterol.Screening, health_overview$High.Cholesterol)
+fit.cholesterol.screening <- lm(High.Cholesterol ~ Cholesterol.Screening,
+                                data = health_overview)
+lines(health_overview$Cholesterol.Screening, fit.cholesterol.screening$fitted.values,
+      col = "red",
+      lwd = 2)
+```
+
+Negativni koeficijent smjera pravca ima smisla i u skladu je s očekivanim - ljudi koji su u posljednjih 5 godina provjerili kolesterol i ustanovili da im je povišen, vjerojatno će promjeniti svoje životne navike i eventualno početi piti lijekove te samim time udio ljudi s povišenim kolesterolom opada.
+
+```{r}
+
+par(mfrow = c(2, 2))
+hist(rstandard(fit.cholesterol.screening))
+
+qqnorm(rstandard(fit.cholesterol.screening))
+qqline(rstandard(fit.cholesterol.screening))
+
+plot(fit.cholesterol.screening,3)
+
+lillie.test(rstandard(fit.cholesterol.screening))
+```
+Reziduali u ovom slučaju nisu normalno distribuirani pa pretpostavke modela nisu zadovoljene. 
+
+Sljedeći odnos koji ima smisla analizirati je između zdravstvenog osiguranja i raka. Ljudi koji imaju zdravstveno osiguranje imat će bolju zdravstvenu skrb, bolju dijagnostiku i samim time veću šansu otkrivanja raka.
+
+```{r}
+par(mfrow=c(2,2))
+
+scatter.smooth(health_overview$Health.Insurance, health_overview$Cancer,
+               lpars=list(col="red", lwd=2))
+fit.cancer.insurance = lm(Cancer~Health.Insurance, data= health_overview)
+
+hist(rstandard(fit.cancer.insurance))
+
+qqnorm(rstandard(fit.cancer.insurance))
+qqline(rstandard(fit.cancer.insurance))
+
+plot(fit.cancer.insurance,3)
+
+lillie.test(rstandard(fit.cancer.insurance))
+```
+
+Iako određena povezanost postoji, reziduali u ovom slučaju nisu normalno distribuirani niti homoskedastični te stoga odbacujemo ovaj model.
+
+Osim utjecaja pojedinih metoda zaštite na bolesti, zanimljivo je provjeriti postoji li možda povezanost između nekih parova bolesti.
+Koronarna bolest, visoki kolesterol, visoki tlak i dijabetes usko su povezani s nezdravim načinom prehrane, starosti osobe, konzumiranjem alkohola te pušenjem. Vrijedi ispitati njihove odnose!
+Radi sažetosti, usredotočimo se na ovisnost koronarne bolesti o ostalim prethodno navedenima.
+
+```{r}
+chd_model <- health_overview[,c(12,14,15,16)]
+chd_model %>% cor %>% corrplot
+```
+
+Vidimo da postoji snažna korelacija između svih ovih bolesti, pa možda naš model višestruke regresije ne bude valjan.
+Provjerimo kvalitetu modela jednostavne regresije između koronarne bolesti i ostalih pojedinačno.
+
+```{r}
+fit.chd.bp <- lm(Coronary.Heart.Disease ~ High.Blood.Pressure, data = chd_model)
+fit.chd.chol <- lm(Coronary.Heart.Disease ~ High.Cholesterol, data = chd_model)
+fit.chd.diab <- lm(Coronary.Heart.Disease ~ Diabetes, data = chd_model)
+summary(fit.chd.bp)
+summary(fit.chd.chol)
+summary(fit.chd.diab)
+```
+
+Vidimo da i modeli jednostavne regresije koronarne bolesti u ovisnosti o povišenom tlaku ili dijabetesu imaju poprilično visok $R^2$ od oko 72%. Prikažimo sada model višestruke regresije.
+
+```{r}
+fit.chd <- lm(Coronary.Heart.Disease ~ ., data = chd_model)
+summary(fit.chd)
+```
+
+Unatoč koreliranosti, vidimo da su svi regresori značajni s vrlo niskom p-vrijednosti i koeficijent determinacije nam je >80%, što je bolje nego u modelima jednostavne linearne regresije. Provjerimo pretpostavke modela.
+
+```{r}
+par(mfrow=c(2,2))
+hist(fit.chd$residuals)
+hist(rstandard(fit.chd))
+qqnorm(rstandard(fit.chd))
+qqline(rstandard(fit.chd))
+```
+
+Grafovi nam izgledaju prihvatljivo, distribucije su zvonolike i nisu previše zakrivljene. Uvjerimo se u normalnost Lillieforsovim testom.
+
+```{r}
+lillie.test(rstandard(fit.chd))
+```
+```{r}
+plot(fit.chd$fitted.values, fit.chd$residuals)
+plot(fit.chd, 3)
+```
+
+Iz grafova odlučujemo prihvatiti pretpostavku homogenosti varijance. Možemo sada izračunati predikciju udjela stanovništva s koronarnom bolesti u ovisnosti o udjelima svake od bolesti koje su regresori u modelu. Provjerimo očekivani udio ljudi s koronarnom bolesti u slučaju da polovica stanovništva ima problema s tlakom, povišen kolesterol i pati od dijabetesa.
+
+```{r}
+test_data <- data.frame(High.Blood.Pressure = 50, High.Cholesterol = 50, Diabetes = 50)
+mean.resp <- predict(fit.chd, test_data, interval = "confidence")
+pred.value <- predict(fit.chd, test_data, interval = "prediction")
+```
+```{r, echo = FALSE}
+print(paste("95%-tni interval pouzdanosti za srednju vrijednost: [", mean.resp[2], ", ", mean.resp[3], "]"))
+print(paste("Predikcija za zadane vrijednosti:", pred.value[1]))
+print(paste("95%-tni interval pouzdanosti za predikciju: [", pred.value[2], ", ", pred.value[3], "]"))
+```
+
+Valja uočiti da je interval pouzdanosti širi za predikciju jedne vrijednosti nego za srednju vrijednost, što je u skladu s očekivanim.
+
+## Zaključak
+
+Ovim projektom smo kroz tri glavna zadatka proveli statističku analizu podataka o preventivnoj zdravstvenoj zaštiti.
+Najprije smo usporedili popularnost pojedinih metoda u saveznim državama Ohio i Florida koristeći se testom o proporcijama, zatim smo testom o homogenosti analizirali koliki udio ljudi boluje od kroničnih plućnih bolesti te na kraju kroz modele linearne regresije (jednostavne i višestruke) pokazali odnos između bolesti i metoda.
